@@ -1,0 +1,1638 @@
+; _____________________________________ ; _____________________________________
+;|© GV'12 (OOO "KPИBOCOФT") - 2012 year|;|   Loaded modules:                   |
+;|        ATMega48 @ 10.00 MHz         |;|   SGEN; CRCS; DM10; MEMU; LLCR;     |
+;|        Schematic : Dev1.pdf         |;|   FALH; CSRS; MSAV; ESAV; SHZT;     |
+;|    Rev: 1.0 rc   Date: 28.08.14     |;|   LDWS;     ;     ;     ;     ;     |
+;|_____________________________________|;|_____________________________________|
+;|    Program registers definition     |;|                                     |
+;|_____________________________________|;|         KDR1 - keys - r13           |
+;|             display RAM             |;|  0-disp_phase0                      |
+;| dr1 = r3,dr2 = r4,dr3 = r5,dr4 = r6 |;|  1-disp_phase1                      |
+;|_____________________________________|;|  2-need_update_ram                  |
+;|             time memory             |;|  3-disp_io_mode : 0:out;1:in        |
+;|       si = r7,mi = r8,hi = r9       |;|  4-key1 pressed                     |
+;|      so = r10,mo = r11,ho = r12     |;|  5-key2 pressed                     |
+;|_____________________________________|;|  6-key3 pressed                     |
+;|        KDR1 = r13   MCR = r18       |;|  7-key4 pressed                     |
+;|       Phase beepdet = r15:r14       |;|_____________________________________|
+;|_____________________________________|;|                                     |
+;|            Tone detector            |;|             --- r16 ---             |
+;|  r20,r21 : sin counter,cos counter  |;|  0 : phase 0                        |
+;|        r22 : count control          |;|  1 : phase 1                        |
+;|_____________________________________|;|  2 : 950 hz counter 0               |
+;|    r25:r24 : autosave pointer       |;|  3 : 950 hz counter 1               |
+;|       r2  : shift pointer           |;|  4 : 425 hz counter 0               |
+;|_____________________________________|;|  5 : 425 hz counter 1               |
+;|  r16,r17 : control logic registers  |;|  6 : 425 hz previous value          |
+;|_____________________________________|;|  7 : NC Wait bit                    |
+;|               ..                    |;|_____________________________________|
+;|          IIIII ..NN    N            |;|                                     |
+;|     .     .I.....N.N...N..          |;|             --- r17 ---             |
+;|    ... ....I.....N..N..N.o.         |;|  0 : Low voltage counter 0 ;4hz     |
+;|   . .......I.....N...N.N...         |;|  1 : Low voltage counter 1          |
+;|      ..  IIIII...N....NN..          |;|  2 : High voltage counter 0         |
+;|     ...      ...........            |;|  3 : High voltage counter 1         |
+;|  DDD..  EEE   BBB    U   U    GGG   |;|  4 : Call wait bit 0                |
+;|  D .D   E     B  B   U   U   G      |;|  5 : Call wait bit 1                |
+;|  D  D   EEE   BBB    U   U   G      |;|  6 : Call wait bit 2                |
+;|  D  D   E     B  B   U   U   G   G  |;|  7 : I/O scale mode (0-in, 1-out)   |
+;|  DDD    EEE   BBB     UUU     GGG   |;|_____________________________________|
+;|_____________________________________|;|                                     |
+;|                                     |;|             --- r18 ---             |
+;|   r0  r1  r2  r3  r4  r5  r6  r7    |;|  0 : Hex display on/off (debug)     |
+;|            x   x   x   x   x   x    |;|  1 : Freqiency mon on/off (debug)   |
+;|   r8  r9  r10 r11 r12 r13 r14 r15   |;|  2 : Voltage mon on/off (debug)     |
+;|    x   x   x   x   x   x   x   x    |;|  3 : Dashboard on/off (debug)       |
+;|   r16 r17 r18 r19 r20 r21 r22 r23   |;|  4 : Bit intercity calls            |
+;|    x   x   x       x   x   x        |;|  5 : ;Call scale action             |
+;|   r24 r25 r26 r27 r28 r29 r30 r31   |;|  6 : HZ_TEST_TYPE : 425 or 970 hz   |
+;|    x   x   X       Y       Z        |;|  7 : Hz test enable                 |
+;|_____________________________________|;|_____________________________________|
+
+; Dashboard -  Display internal_registers _ as: dig1 - default; dig_2 - |_| - Phase;;;_;_ - IOSM, o - CSRS call;
+;                      dig3 - | | - CWB; | -LVc;_|-HVc, o-425run; | - 425cn, |-425pw;| - 950cnt,  |-NCWB, o - 925run, _ - time scale event
+
+;=================================
+;------Test mode control----------
+	#define TestON            ;   Disables keys protection and other production fixes.
+;------End test control-----------
+	.nolist
+	.include "m48def.inc"
+	.list
+	.dseg
+	.org 0x0100
+TiMem:	.byte 5 ; hi mi ho mo crc8
+	.cseg
+;------Code Section---------------
+	.org 0
+	rjmp  RESET ; Reset Handler
+	rjmp  I3 ; IRQ0 Handler
+	rjmp pc ; IRQ1 Handler
+	rjmp pc ; PCINT0 Handler
+	rjmp pc ; PCINT1 Handler
+	rjmp pc ; PCINT2 Handler
+	rjmp pc ; Watchdog Timer Handler
+	rjmp pc ; Timer2 Compare A Handler
+	rjmp pc ; Timer2 Compare B Handler
+	rjmp pc ; Timer2 Overflow Handler
+	rjmp pc ; Timer1 Capture Handler
+	rjmp  I2 ; Timer1 Compare A Handler
+	rjmp pc ; Timer1 Compare B Handler
+	rjmp pc ; Timer1 Overflow Handler
+	rjmp pc ; Timer0 Compare A Handler
+	rjmp pc ; Timer0 Compare B Handler
+	rjmp  I1 ; Timer0 Overflow Handler
+	rjmp pc ; SPI Transfer Complete Handler
+	rjmp pc ; USART, RX Complete Handler
+	rjmp pc ; USART, UDR Empty Handler
+	rjmp pc ; USART, TX Complete Handler
+	rjmp pc ; ADC Conversion Complete Handler
+	rjmp pc ; EEPROM Ready Handler
+	rjmp pc ; Analog Comparator Handler
+	rjmp pc ; 2-wire Serial Interface Handler
+	rjmp pc ; SPM ready handler
+
+
+	.db 10,13,"> Get the source at https://github.com/GorosVia/PhoneCo/ <",10,13
+
+
+RESET:	; RUNS : INT0 for change level monitoring
+	; Analog Comparator for tone detect
+	; ADC for line voltage monitoring
+	; T0 overflow for display refresh and tone detection
+	; T1 OC1A CTC for time count and system clock
+	; Sleep mode idle
+
+	.equ EICRAV = (1<<ISC01)
+	.equ EIMSKV = (1<<INT0)
+	.equ TIMSK0V = (1<<TOIE0)
+	.equ TCCR0BV = 2
+	.equ TCCR1BV = (1<<WGM12)|3 ;4 HZ
+	.equ OCR1AV = 0x9896;0x7A12
+	.equ TIMSK1V = (1<<OCF1A)
+	.equ SMCRV = (1<<SE)
+	.equ ADCSRAV = (1<<ADEN)|0x6
+	.equ ADMUXV = (1<<ADLAR)|0x6;adc6
+
+	cli
+
+#ifndef TestON
+	.equ WDTCSRV = (1<<WDCE)|(1<<WDE)|(6<<WDP0) ;1s timeout
+	ldi r16,WDTCSRV
+	sts WDTCSR,r16
+	sts WDTCSR,r16
+#endif
+	clr r2
+	clr r17
+	clr r18
+
+	ldi r16,low(ramend)
+	out spl,r16
+	ldi r16,high(ramend)
+	out sph,r16
+	ldi r16,EICRAV
+	sts EICRA,r16
+	ldi r16,EIMSKV
+	out EIMSK,r16
+	ldi r16,TIMSK0V
+	sts TIMSK0,r16
+	ldi r16,TCCR0BV
+	out TCCR0B,r16
+	ldi r16,TCCR1BV
+	sts TCCR1B,r16
+	ldi r16,TIMSK1V
+	sts TIMSK1,r16
+	ldi r16,HIGH(OCR1AV)
+	sts OCR1AH,r16
+	ldi r16,LOW(OCR1AV)
+	sts OCR1AL,r16
+	ldi r16,ADMUXV
+	sts ADMUX,r16
+	ldi r16,ADCSRAV
+	sts ADCSRA,r16
+
+	;Additionsl keys pullup
+#ifndef TestON
+	sbi PORTB,0
+#endif
+	; Segment driving outputs - off for DDR control
+	ldi r16,0x33
+	out DDRD,r16
+
+	wdr
+
+	rcall LLCR
+
+	;Clear Video RAM
+	clr r3
+	clr r4
+	clr r5
+	clr r6
+
+	sbr r17,0x68; Adjust delay to set outcoming mode
+
+	;Request RAM update
+	ldi r16,0x04 ;NUR
+	mov r13,r16
+	clr r16
+
+	wdr
+
+	sei
+MAIN:	sleep
+	rjmp MAIN
+
+
+
+
+;-------------INTERRUPTS----------------
+I1: 	;4882.8 hz
+	;Display refresh - T0 with tone detector
+	ldi r31,16
+	push r19
+	push r17
+	in r19,SREG
+	push r19
+;---------------------------------------------------TONE
+	sbrs r18,7 ; Tone det - OFF
+	rjmp ai
+	;Tone detection
+	;Phase counter : r14:r15
+	;add 0x1649 0x31D0
+	sbrc r18,6
+	rjmp ao
+	ldi r19,low(ADD425) ;425hz - 0
+	add r14,r19
+	ldi r19,high(ADD425)
+	adc r15,r19
+	rjmp an
+ao:	ldi r19,low(ADD950) ;950hz - 1
+	add r14,r19
+	ldi r19,high(ADD950)
+	adc r15,r19
+an:	clr r19 ;r19 : 0 0 x 0 0 0 sin cos
+	clr r17
+	sbrc r15,7 ;1-bit sin and cos gen.
+	sbr r19,0x3
+	sbrc r15,6
+	sbr r17,0x1
+	eor r19,r17
+	in r17,ACSR
+	cbr r17,0xDF
+	sbrc r17,5 ;if aco = 1
+	sbr r17,0x3
+	eor r19,r17
+	sbrc r19,1
+	inc r20
+	sbrc r19,0
+	inc r21
+	dec r22
+	cpi r22,0
+	brne ai
+	;End HZ test
+	push r0
+	push r1
+	subi r20,NOP950/2
+	sbrs r18,6
+	subi r20,(NOP425 - NOP950)/2
+	cpi r20,256 - NOP950/2
+	sbrs r18,6
+	cpi r20,256 - NOP425/2
+	brlo av
+	ser r19
+	sub r19,r20
+	inc r19
+	mov r20,r19
+av:	subi r21,NOP950/2
+	sbrs r18,6
+	subi r21,(NOP425 - NOP950)/2
+	cpi r21,256 - NOP950/2
+	sbrs r18,6
+	cpi r21,256 - NOP425/2
+	brlo aw
+	ser r19
+	sub r19,r21
+	inc r19
+	mov r21,r19
+	;end abs
+aw: 	mul r20,r20
+	mov r17,r0	;r1 : r0
+	mov r19,r1	;r19:r17
+	mul r21,r21	;r21:r20
+	add r17,r0
+	adc r19,r1
+	mov r20,r17
+	mov r21,r19
+	cbr r18,0x80
+	pop r1
+	pop r0
+;---------------------------------------------------END TONE
+;---------------------------------------------------RAM
+;-----	;start work with ram
+ai:	sbrs r13,2
+	rjmp ap
+	push r14
+	push r15
+	sbrc r13,3
+	rjmp ar ;in dm
+	mov r14,r12
+	mov r15,r11
+	rjmp as
+ar:	mov r14,r9
+	mov r15,r8
+as:	rcall memu
+	pop r15
+	pop r14
+	;end work with ram
+;---------------------------------------------------END RAM
+	;light off for all
+	;   8     4     2     1
+	;  IOm  ICity  Off
+
+	;  1     8io
+	;  4ic   2on
+
+	;  8io   2on ic
+	;  1     4ic on
+;---------------------------------------------------INDICATION OFF
+ap:	in r19,ddrb
+	andi r19,0xE1
+	out ddrb,r19
+	in r19,ddrc
+	andi r19,0xC3
+	out ddrc,r19
+	;end LOFA
+;---------------------------------------------------END INDICATION OFF
+;---------------------------------------------------LED, KEYS & FLASH
+
+	;start work with keys and led
+	mov r19,r13
+
+	;phase reading
+	sbrc r13,1
+	rjmp ak
+	sbrc r13,0
+	rjmp al
+
+	cbr r19,0x40;10 ;Key flag
+	sbis pinb,0     ;Key flag
+	sbr r19,0x40;10 ;Key flag
+	mov r17,r6 ;----------------------------------00 - N03(from  left)
+
+	;state indication
+	sbrc r13,3
+	rjmp do
+	 cbr r17,0x80 ;protection
+	tst r2 ;ldws flash
+	breq dq
+	sbrs r16,1
+	 sbr r17,0x80
+	rjmp dq
+do:	 sbr r17,0x80
+	sbrs r18,4 ;trigger
+	rjmp dq
+	sbrs r16,0
+	 cbr r17,0x80 ;intercity flash
+	;rjmp dq
+dq:	;end state indication
+	sbi portd,4 ; off for DDR control
+	cbi portd,1 ; off for DDR control
+	sbi ddrd,1
+	rjmp aj
+
+
+al:	cbr r19,0x80;20 ;Key flag
+	sbis pinb,0     ;Key flag
+	sbr r19,0x80;20 ;Key flag
+	mov r17,r5 ;----------------------------------01 - N04(from  left)
+	sbi portd,1 ; off for DDR control
+	cbi portd,5 ; off for DDR control
+	sbi ddrd,5
+	rjmp aj
+
+
+ak:	sbrc r13,0
+	rjmp am
+	cbr r19,0x20;40 ;Key flag
+	sbis pinb,0     ;Key flag
+	sbr r19,0x20;40 ;Key flag
+	mov r17,r4 ;----------------------------------10 - N01(from  left)
+	sbi portd,5 ; off for DDR control
+	cbi portd,0 ; off for DDR control
+	sbi ddrd,0
+	rjmp aj
+
+
+am:	cbr r19,0x10;80 ;Key flag
+	sbis pinb,0     ;Key flag
+	sbr r19,0x10;80 ;Key flag
+	mov r17,r3 ;----------------------------------11 - N02(from  left)
+
+	;state indication
+	sbrs r13,3
+	rjmp dp
+	 cbr r17,0x80 ;protection
+	tst r2 ;ldws flash
+	breq dr
+	sbrs r16,1
+	 sbr r17,0x80
+	rjmp dr
+dp:	 sbr r17,0x80
+	sbrs r18,4 ;trigger
+	rjmp dr
+	sbrs r16,0
+	 cbr r17,0x80 ;intercity flash
+	;rjmp dr
+dr:	;end state indication
+	sbi portd,0 ; off for DDR control
+	cbi portd,4 ; off for DDR control
+	sbi ddrd,4
+	;rjmp aj
+	;end work with keys
+aj:	mov r13,r19
+	;end end work with keys
+
+;	com r17
+	mov r19,r17
+	cbr r17,0x0F
+	cbr r19,0xF0
+	lsr r17
+	lsr r17
+	;lsl r19 - for modified LED
+	lsl r19
+	push r17
+	in r17,ddrb
+	cbr r17,0x1E
+	or r19,r17
+	out ddrb,r19
+	pop r17
+	in r19,ddrc
+	cbr r19,0x3C
+	or r17,r19
+	out ddrc,r17
+	sbrc r13,1
+	rjmp lac0
+	sbrc r13,0
+	rjmp lac1
+	;00
+	cbi DDRD,4
+	cbi PORTD,4
+	rjmp lac3
+lac1:	;01
+	cbi DDRD,1
+	cbi PORTD,1
+	rjmp lac3
+lac0:	sbrc r13,0
+	rjmp lac2
+	;10
+	cbi DDRD,5
+	cbi PORTD,5
+	rjmp lac3
+lac2:	;11
+	cbi DDRD,0
+	cbi PORTD,0
+	;rjmp lac3
+lac3:
+	;end work with led
+;---------------------------------------------------END LED, KEYS & FLASH
+
+	mov r19,r13
+	cbr r19,0x04
+	inc r19 ;increase phase
+	cbr r19,0x04
+	mov r13,r19
+	pop r19
+	out SREG,r19
+	pop r17
+	pop r19
+	reti
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+I2:	;4hz ;labels : d0..dz + e0..em
+	;main interrupt : count time
+	.equ VSBMAX = 0x4C ;CALL 0xAF00 max ;0x80
+	.equ VSBMIN = 0x10 ;STBY 0x7200 - 0x7600
+	.equ VNC    = 0x01 ;DIAL 0x0CC0 - 0x0F00
+	.equ PT425  = 0x01 ;NC   0x0000
+	.equ PT950  = 0x01
+	push r19
+	in r19,SREG
+	push r19
+	wdr
+#ifdef TestON
+	sbrs r18,2
+	rjmp fc
+	push r14
+	push r15
+	lds r15,ADCL
+	lds r14,ADCH
+	rcall memu
+	pop r15
+	pop r14
+fc:	; Freq test display
+	sbrs r18,1
+	rjmp fe
+	push r19
+	push r14
+	push r15
+	mov r14,r21
+	mov r15,r20
+	sbrc r16,0
+	rjmp ft0
+	lsl r15
+	rol r14
+	lsl r15
+	rol r14
+ft0:	rcall memu
+	; off leading zeros
+	ldi r19,0x7E
+	cp  r19,r3
+	brne ft1
+	cp  r19,r4
+	brne ft1
+	clr r4
+ft1:	ldi r19,0x0  ;5F ;9 50
+	sbrc r16,0
+	ldi r19,0x4B ;4 25
+	mov r3,r19
+	pop r15
+	pop r14
+	pop r19
+	cbr r18,0x40 ;TT - 425
+	sbrc r16,0
+	sbr r18,0x40 ;TT - 950
+	rcall SHZT
+fe:
+	;if dashboard on flag
+	sbrs r18,3
+	rjmp f0
+
+	clr r4
+	clr r5
+	clr r6
+	; ========================DIGIT 2
+	; phase indication
+	ldi r19,0x01; _
+	sbrc r16,0
+	ldi r19,0x02;|
+	sbrs r16,1
+	rjmp Dash1  ; _
+	ldi r19,0x04;
+	sbrc r16,0
+	ldi r19,0x08;  |
+Dash1:	sbrc r17,7 ;IOSM
+	ori r19,0x10; _
+	mov r4,r19
+	; ========================DIGIT 3
+	clr r19
+	sbrc r17,4 ;cwb0
+	ori r19,0x08
+	sbrc r17,5 ;cwb1
+	ori r19,0x04
+	sbrc r17,6 ;cwb2
+	ori r19,0x02
+	sbrc r17,0 ;lwc0
+	ori r19,0x01
+	sbrc r17,1 ;lwc1
+	ori r19,0x20
+	sbrc r17,2 ;hwc0
+	ori r19,0x40
+	sbrc r17,3 ;hwc1
+	ori r19,0x10
+	mov r5,r19
+	; ========================DIGIT 4
+	clr r19
+	sbrc r16,4 ;425cl
+	ori r19,0x04
+	sbrc r16,5 ;425ch
+	ori r19,0x02
+	sbrc r16,6 ;425pw
+	ori r19,0x08
+	sbrc r16,2 ;950cl
+	ori r19,0x01
+	sbrc r16,3 ;950ch
+	ori r19,0x20
+	sbrc r16,7 ;NCWB
+	ori r19,0x40;  |
+	mov r6,r19
+f0:
+	;end dashboard
+#endif
+
+
+	;==========voltage monitoring========================
+	lds r19,ADCH
+	cpi r19,VSBMAX
+	brlo d1
+	;==================================================== call
+
+#ifdef TestON
+	;if dashboard on flag
+	sbrs r18,3
+	rjmp f1
+	ldi r19,0x36 ;C
+	mov r3,r19
+f1:	;end dashboard
+#endif
+
+	cbr r17,0xF0;|0x0C ;Call counter ;+ HV counter
+
+	sbr r17,0x30; Adjust delay
+
+	cbr r16,0x7C|0x80 ;Hz counters + NC bit
+	sbr r16,0x10 ;Start wait - free 3 seconds
+	rjmp d0 ; clear seconds regs
+
+d1:	cpi r19,VSBMIN
+	brlo d2
+	;==================================================== standby
+#ifdef TestON
+	;if dashboard on flag
+	sbrs r18,3
+	rjmp f2
+	ldi r19,0x57 ;5 - s
+	mov r3,r19
+f2:	;end dashboard
+#endif
+
+	mov r19,r17
+	cbr r19,0xF3
+	cpi r19,0x0C ;if HV cntr == '11'
+	breq e1
+
+	sbrs r16,0 ;3 sec wait
+	sbrs r16,1 ; if phase == '10'
+	rjmp du
+
+	;scale HV counter
+	sbrc r17,2
+	rjmp e0
+	sbr r17,0x04
+	rjmp du
+e0:	cbr r17,0x04
+	sbr r17,0x08
+	rjmp du
+
+
+e1:	cbr r16,0x7C|0x80 ;Hz counters + NC bit
+	sbr r16,0x10 ;Start wait
+	cbr r17,0x03 ;LV counter
+	sbrc r16,1 ;if phase == '10' and IOSM == out then scale CallWaitBits
+	sbrc r16,0
+	rjmp d0 ; clear seconds regs
+	sbrc r17,7
+	rjmp d0 ; clear seconds regs
+	swap r17
+	inc r17
+	swap r17
+	rjmp d0 ; clear seconds regs
+
+
+dn:	;==================================================== line not connected
+#ifdef TestON
+	;if dashboard on flag
+	sbrs r18,3
+	rjmp f4
+	ldi r19,0x61 ;n
+	mov r3,r19
+f4:	;end dashboard
+#endif
+	sbrc r16,7
+	rjmp e2
+	sbrc r16,0 ;0.5 sec wait
+	sbr r16,0x80
+	rjmp du
+e2:	;cbr r17,0x0F ;HV,LV counters
+	clr r17
+	sbr r17,0x80 ;IOSM out
+	cbr r16,0x7C
+	sbr r16,0x10 ;Start wait - Free 3 first seconds
+	rjmp d0 ; clear sec regs
+
+
+d2:	cpi r19,VNC
+	brlo dn
+	;====================================================
+#ifdef TestON
+	;if dashboard on flag
+	sbrs r18,3
+	rjmp f5
+	ldi r19,0x79 ;d
+	mov r3,r19
+f5:	;end dashboard
+#endif
+	rjmp d3
+IncDialCounter:
+	; 1.5 sec wait
+	sbrs r16,0
+	inc r17
+	rjmp du
+	; if counter owerflows, pipeline control
+d3:	sbrc r17,0
+	sbrs r17,1
+	rjmp IncDialCounter
+	cbr r17,0x0C ;HV counter
+	cbr r16,0x80 ;NC bit
+
+
+	mov r19,r16 ;950 hz counter full
+	lsl r19
+	and r19,r16
+	;sbrc r19,3
+	;rjmp dg
+	sbrs r19,3
+	rjmp ils1
+#ifdef TestON
+;if dashboard on flag
+	sbrs r18,3
+	rjmp f6
+	ldi r19,0x2F ;P
+	mov r3,r19
+f6:	;end dashboard
+#endif
+
+	rjmp d6
+
+ils1:
+FREQTEST:
+	;================================ hz tests
+	sbrc r16,0
+	rjmp d7
+
+	;================================ 950 get
+
+	lsl r20
+	rol r21
+	lsl r20
+	rol r21
+	cpi r21,PT950
+	;result : r21:r20
+	brlo d8
+
+#ifdef TestON
+;if dashboard on flag
+	sbrs r18,3
+	rjmp f7
+	ldi r19,0x5F ;9
+	mov r3,r19
+f7:	;end dashboard
+#endif
+
+	sbrc r16,2
+	rjmp d9
+	sbr r16,0x04
+	rjmp da
+d9:	sbrc r16,3
+	rjmp da ;db
+	cbr r16,0x04
+	sbr r16,0x08
+	rjmp da
+;db:	;sbr r17,0x08
+d8:	cbr r16,0x0C
+
+da:	;================================ 425 run
+	cbr r18,0x40 ;TT
+	rcall SHZT
+#ifdef TestON
+;if dashboard on flag
+	sbrs r18,3
+	rjmp f8
+	ldi r19,0x80
+	or r5,r19;  .
+f8:	;end dashboard
+#endif
+	rjmp d6
+
+d7:	;================================ 425 get
+
+	mov r19,r16 ;3 sec wait
+	cbr r19,0xCF
+	tst r19
+	breq dd
+	sbrc r16,1
+	rjmp dd
+	swap r19
+	inc r19
+	cbr r16,0x30
+	sbrc r19,0
+	sbr r16,0x10
+	sbrc r19,1
+	sbr r16,0x20
+	rjmp dd
+
+dd:	cpi r21,PT425
+	brlo de
+
+#ifdef TestON
+;if dashboard on flag
+	sbrs r18,3
+	rjmp f9
+	ldi r19,0x4B ;4
+	mov r3,r19
+f9:	;end dashboard
+#endif
+	sbrc r16,6 ; No capture single events
+	cbr r16,0x30
+	sbrc r16,6 ; No capture single events
+	sbr r16,0x10
+	sbr r16,0x40
+	rjmp dl
+de:	cbr r16,0x40
+
+dl:	;================================ 950 run
+	sbr r18,0x40 ;TT
+	rcall SHZT
+#ifdef TestON
+;if dashboard on flag
+	sbrs r18,3
+	rjmp fa
+	ldi r19,0x80
+	or r4,r19;  .
+fa:
+#endif
+	;rjmp d6
+
+d6:
+
+	sbrc r16,0
+	sbrs r16,1
+	rjmp du
+	;Time scale trigger
+	sbrs r16,4 ; 425 wait
+	sbrc r16,5
+	rjmp du
+	sbrc r18,4
+	rjmp du
+;scale event
+#ifdef TestON
+	;if dashboard on flag
+	sbrs r18,3
+	rjmp fb
+	ldi r19,0x10
+	or r6,r19; _
+fb:	;end dashboard
+#endif
+	ldi r19,60
+	sbrc r17,7 ;read IO mode
+	rjmp d5
+	;0 - in
+	inc r7
+	cp r7,r19
+	brlo du
+	clr r7
+	inc r8
+	cp r8,r19
+	brlo d4
+	clr r8
+	inc r9
+	brne d4
+	dec r9
+	rjmp d4
+d5:	;1 - out
+	inc r10
+	cp r10,r19
+	brlo du
+	clr r10
+	inc r11
+	cp r11,r19
+	brlo d4
+	clr r11
+	inc r12
+	brne d4
+	dec r12
+d4:	tst r2 ; no clear fake data
+	brne fg
+	ldi r19,0x04 ;NUR
+	clr r2
+	or r13,r19
+fg:
+	rjmp du
+
+; clear seconds regs
+d0:	sbrc r16,0
+	sbrs r16,1
+	rjmp du
+	rcall CSRS
+
+;; ============================================ KEYBOARD BIND
+du:	;ADC run
+	lds r19,ADCSRA
+	sbr r19,(1<<ADSC)
+	sts ADCSRA,r19
+	sbrs r16,0
+	rjmp dg
+	mov r19,r13
+	cbr r19,0x0F
+	cpi r19,0x40 ;intercity call - OK
+	brne dh
+	ldi r19,0x10
+	eor r18,r19
+	rjmp dg
+dh:	cpi r19,0x50 ;Manual save - W
+	brne di
+	;cli
+	rcall MSAV
+	;sei
+	rjmp dg
+di:	cpi r19,0x80 ;i/o display mode change - OK
+	brne dj
+	ldi r19,0x0C ;cheap & dirty ; NUR
+	eor r13,r19
+	tst r2
+	breq dg
+	ldi r19,0x04 ;NUR
+	eor r13,r19
+	;cli
+	rcall LDWS
+	;sei
+	rjmp dg
+dj:	cpi r19,0x20 ;on/off LED - OK
+	brne dk
+	in r19,portb
+	cbr r19,0x1E
+	sbis portb,2
+	sbr r19,0x1E
+	out portb,r19
+	in r19,portc
+	cbr r19,0x3C
+	sbic portb,2
+	sbr r19,0x3C
+	out portc,r19
+	rjmp dg
+dk:	cpi r19,0x90 ;prev saved value - OK
+	brne dm
+	inc r2
+	;cli
+	rcall LDWS
+	;sei
+	rjmp dg
+dm:	cpi r19,0x30 ;clear prev val - OK
+	brne dx
+	clr r2
+	ldi r19,0x04 ;NUR
+	or r13,r19
+	rjmp dg
+dx:	cpi r19,0xF0
+	brne ek
+	;out 1.0 rc  - OK
+	ldi r19,0x48
+	mov r3,r19
+	ldi r19,0x7E
+	mov r4,r19
+	ldi r19,0x21
+	mov r5,r19
+#ifdef TestON
+	ldi r19,0x31
+#else	ldi r19,0x00
+#ifdef TestON
+	ldi r19,0x71
+#endif
+#endif
+	mov r6,r19
+	rjmp dg
+ek:
+#ifdef TestON
+	cpi r19,0xB0 ; dashboard on/off
+	brne em
+	mov r19,r18
+	cbr r19,0xF0
+	brne el
+	sbr r18,0x08
+	rjmp dg
+el:	cbr r18,0x0C
+	ldi r19,0x04 ;NUR
+	or r13,r19
+	rjmp dg
+
+em:	cpi r19,0x70 ; Voltmeter on/off
+	brne en
+	mov r19,r18
+	cbr r19,0xF0
+	brne el
+	sbr r18,0x04|0x01 ; hex display
+	rjmp dg
+
+en:	cpi r19,0xE0 ; Freqmeter on/off
+	brne dg
+	mov r19,r18
+	cbr r19,0xF0
+	brne el
+	sbr r18,0x02|0x01 ; hex display
+	;rjmp dg
+#endif
+
+dg:	;Phase scale
+	mov r19,r16
+	inc r19
+	cbr r16,0x03
+	sbrc r19,0
+	sbr r16,0x01
+	sbrc r19,1
+	sbr r16,0x02
+	pop r19
+	out SREG,r19
+	pop r19
+	reti
+
+
+I3:	;Emergency save/load interrupt
+	push r16
+	in r16,SREG
+	push r16
+	in r16,DDRD
+	cbr r16,0x33
+	out DDRD,r16
+	in r16,PORTD
+	cbr r16,0x33
+	out PORTD,r16
+	sbic pind,2
+	rjmp ds ; if int was raised at power on
+
+;	power off
+	clr r16
+	out ddrb,r16
+	out ddrc,r16
+	out ddrd,r16
+	out portb,r16
+	out portc,r16
+	out portd,r16
+	;cli
+	rcall ESAV
+	;sei
+	sleep
+
+ds:	;power on
+	rjmp RESET
+
+	pop R16
+	out SREG,r16
+	pop r16
+	reti
+
+
+	;-----------Tone detection--------------
+SHZT:  ;3906.25 hz
+	.equ NOP425 = 56
+	.equ NOP950 = 24
+	.equ ADD425 = 0x1649
+	.equ ADD950 = 0x31D0
+	;Start HZ test
+	push r16
+	clr r14
+	clr r15
+	clr r20
+	clr r21
+	ldi r22,NOP425
+	sbrc r18,6
+	ldi r22,NOP950
+	sbr r18,0x80
+	pop r16
+	ret
+
+;------------Sign generator-------------
+;--------0123456789AbCdEF-...-#---------
+SBSE:	.dw 0x487E,0x5D3D,0x574B,0x4C77
+	.dw 0x5F7F,0x736F,0x7936,0x2737
+SGEN:	;r15 : data input/output
+	;r16 : temp - do not saved
+	mov r16,r15
+	cpi r16,0x10
+	brlo a8
+	cpi r16,0xFF ;255
+	ldi r16,0x00
+	breq a7
+	ldi r16,0x01 ;10..254
+	rjmp a7
+a8:	push r31
+	push r30
+	ldi r31,high(SBSE*2);zh
+	ldi r30,low(SBSE*2);zl
+	add r30,r16
+	ldi r16,0x00
+	adc r31,r16
+	lpm r16,Z
+	pop r30
+	pop r31
+a7:	mov r15,r16
+	ret
+
+;------------Memory update--------------
+MEMU:	;r3,r4,r5,r6 : graphics data
+	;r14(d12),r15(d34) : data input
+	;r16 : temp
+	push r16
+	push r14
+	;3-4 digits - r15
+	rcall dm10
+	rcall sgen
+	mov r6,r15
+	mov r15,r14
+	rcall sgen
+	mov r5,r15
+	pop r15
+	;1-2 digits - r14
+	rcall dm10
+a6:	rcall sgen
+	mov r4,r15
+	mov r15,r14
+	rcall sgen
+	mov r3,r15
+	pop r16
+	ret
+
+;-------------DIV&MOD 10----------------
+DM10:	;r16 : temp
+	;r14(nu),r15(in) : data i/o
+	;63 ops max
+#ifdef TestON
+	;if hex display
+	sbrs r18,0
+	rjmp fd
+	ldi r19,0x10
+	or r6,r19; _
+	;hexadecimal mode
+	mov r14,r15
+	swap r15
+	lsr r14
+	lsr r14
+	lsr r14
+	lsr r14
+	lsr r15
+	lsr r15
+	lsr r15
+	lsr r15
+	ret
+fd:	;end hex display
+#endif ;decimal mode
+	push r16
+	clr r14
+	mov r16,r15
+	cpi r16,10
+	brlo a2
+	cpi r16,100
+	brlo a1
+	ldi r16,254
+	mov r14,r16
+	rjmp a2
+a1:	subi r16,10
+	inc r14
+	cpi r16,10
+	brsh a1
+a2:	mov r15,r16
+	pop r16
+	ret
+
+
+
+
+
+
+
+;-----------EEPROM Code Unit------------
+	;EEPROM pointer limits
+	.equ SML = 0x0001
+	.equ SMH = 0x00F1
+	.equ PS = 6
+	;Packet structure : hdr crc hi mi ho mo
+ESAV:	;CLI required!
+	sbic EECR,EEPE
+	rjmp ESAV
+	push r16
+;	out EEARH,r25 ;for more than 0.25k memory
+	out EEARL,r24
+	sbi EECR,EERE
+	in r16,EEDR ;old header load
+	rcall CSRS
+	;r24:r25 : pointer to prev record
+	cpi r25,high(SMH)
+	brlo ct
+	cpi r24,low(SMH)
+	brlo ct
+;	ldi r25,high(SML) ;for more than 0.25k memory
+	ldi r24,low(SML)
+	adiw r24,2
+	rjmp cu
+ct:	adiw r24,PS+2;set pointer to next record
+cu:	;sbic EECR,EEPE ;wait while writing
+	;rjmp cu
+;	out  EEARH,r25 ;for more than 0.25k memory
+	out  EEARL,r24
+	out  EEDR,r9 ;hi
+	sbi  EECR,EEMPE
+	sbi  EECR,EEPE
+	adiw r24,1
+cx:	sbic EECR,EEPE ;wait while writing
+	rjmp cx
+;	out  EEARH,r25 ;for more than 0.25k memory
+	out  EEARL,r24
+	out  EEDR,r8 ;mi
+	sbi  EECR,EEMPE
+	sbi  EECR,EEPE
+	adiw r24,1
+cy:	sbic EECR,EEPE ;wait while writing
+	rjmp cy
+;	out  EEARH,r25 ;for more than 0.25k memory
+	out  EEARL,r24
+	out  EEDR,r12 ;ho
+	sbi  EECR,EEMPE
+	sbi  EECR,EEPE
+	adiw r24,1
+cz:	sbic EECR,EEPE ;wait while writing
+	rjmp cz
+;	out  EEARH,r25 ;for more than 0.25k memory
+	out  EEARL,r24
+	out  EEDR,r11 ;mo
+	sbi  EECR,EEMPE
+	sbi  EECR,EEPE
+	; hdr crc hi mi ho mo
+	; 5   6   1  2  3  4
+	sbiw r24,(PS-1)
+	cpi r16,0xFE ;new header
+	brlo cv
+	clr r16
+cv:	inc r16
+bz:	sbic EECR,EEPE ;wait while writing
+	rjmp bz
+;	out  EEARH,r25 ;for more than 0.25k memory
+	out  EEARL,r24
+	out  EEDR,r16 ;hdr
+	sbi  EECR,EEMPE
+	sbi  EECR,EEPE
+	adiw r24,1
+	;calculate CRC
+	push ZL
+	push ZH
+	ldi ZH,high(TiMem)
+	ldi ZL,low(TiMem)
+	st Z+,r9
+	st Z+,r8
+	st Z+,r12
+	st Z+,r11
+	ser r16
+	rcall CRCS
+	ld r16,Z
+by:	sbic EECR,EEPE ;wait while writing
+	rjmp by
+;	out  EEARH,r25 ;for more than 0.25k memory
+	out  EEARL,r24
+	out  EEDR,r16 ;crc
+	sbi  EECR,EEMPE
+	sbi  EECR,EEPE
+	sbiw r24,1
+	clr r16
+;	out  EEARH,r16 ;for more than 0.25k memory
+	out  EEARL,r16
+	pop ZH
+	pop ZL
+	pop r16
+	ret
+	;Clear seconds regs
+CSRS:	push r16
+	ldi r16,60
+	tst r7
+	breq dy
+	clr r7
+	inc r8
+	cp r8,r16
+	brlo bx
+	clr r8
+	inc r9
+	brne bx
+	dec r9
+bx:	tst r2 ; no clear fake data
+	brne ft
+	ldi r16,0x04 ;NUR
+	clr r2
+ft:	or r13,r16
+	ldi r16,60
+dy:	tst r10
+	breq dz
+	clr r10
+	inc r11
+	cp r11,r16
+	brlo bw
+	clr r11
+	inc r12
+	brne bw
+	dec r12
+bw:	tst r2 ; no clear fake data
+	brne fu
+	ldi r16,0x04 ;NUR
+	or r13,r16
+fu:
+dz:	pop r16
+	ret
+MSAV:	;cli
+	rcall ESAV
+	clr r8
+	clr r9
+	clr r11
+	clr r12
+	rcall ESAV
+	push r16
+	ldi r16,0x04 ;NUR
+	or r13,r16
+	;sei
+	pop r16
+	ret
+FALH:	;CLI required!
+; last correct header is before any bad
+;FLCH - to first BAD number & last id
+; N e [0x01 .. 0xFE],0x00&0xFF not used
+	;Find address of a last correct header
+	;Rew : pointer to start of packet
+	;regs : r24:r25 : pointer in mem
+	;r16,r17,r18 : temp regs
+	;If memory cleared or all is bad - r25:r24 = 0
+	sbic EECR,EEPE
+	rjmp FALH
+	push r16
+	push r17
+	push r18
+	push ZL
+	push ZH
+	ldi r24,low(SML)
+	ldi r25,high(SML)
+;	out EEARH,r25 ;for more than 0.25k memory
+	out EEARL,r24
+	sbi EECR,EERE
+	in r16,EEDR ;r16 preload
+	cpi r16,0x00
+	breq bv
+	cpi r16,0xFF
+	brne cb
+bv:	;clr r24
+	;clr r25
+	rjmp cs;k ;exit with errors!
+	;no records found
+cb:	adiw r24,PS
+	;r16 - previous header
+cc:;	out EEARH,r25 ;for more than 0.25k memory
+	out EEARL,r24
+	sbi EECR,EERE
+	in r17,EEDR ;r17 - current value
+	;r17 =/= { 0 ; 255 }
+	cpi r17,0x00
+	breq ca
+	cpi r17,0xFF
+	breq ca
+	cpi r16,0xFE
+	brlo cd
+	cpi r17,0x01
+	brne ca
+	;замыкание допустимо
+	rjmp ce
+cd:	mov r18,r17
+	sub r18,r16 ;delta calculating
+	cpi r18,0x01
+	brne ca
+ce:	mov r16,r17
+	cpi r25,high(SMH)
+	brlo cf
+	cpi r24,low(SMH)
+	brlo cf
+	ldi r25,high(SML)
+	ldi r24,low(SML)
+	rjmp ca ;Дошли до конца - и хватит
+cf:	adiw r24,PS ;modify pointer
+	rjmp cc
+ca:	;first bad block or last record detected.
+	;step down
+	inc r16
+	cpi r16,0xFF
+	brne cj
+	ldi r16,0x01
+	rjmp cj ;sd???????????????????????
+	;ldi r17,high(SML+PS)
+	;cpi r24,low(SML+PS)
+	;cpc r25,r17
+	;brlo ch
+	;sbiw r24,PS ;reward to last correct
+	;rjmp CCRC
+;ch:	ldi r25,high(SMH)
+	;ldi r24,low(SMH)
+	;Do NOT write anything before CCRC!
+CCRC:	;Check CRC module - Do not use without FLCH!
+	;r24:r25 - pointer to curent header
+	; header crc data0 data1 data2 data3
+	; RAM: data0 data1 data2 data3 crc
+	adiw r24,1 ;load CRC
+;	out EEARH,r25 ;for more than 0.25k memory
+	out EEARL,r24
+	sbi EECR,EERE
+	in r18,EEDR
+	;sbrc r18,7 ;проверка отключена
+	;rjmp cj ;всё-таки BAD
+	ldi ZL,low(TiMem)
+	ldi ZH,high(TiMem)
+	adiw r24,1 ;load data0
+;	out EEARH,r25 ;for more than 0.25k memory
+	out EEARL,r24
+	sbi EECR,EERE
+	in r17,EEDR
+	st Z+,r17
+	adiw r24,1 ;load data1
+;	out EEARH,r25 ;for more than 0.25k memory
+	out EEARL,r24
+	sbi EECR,EERE
+	in r17,EEDR
+	st Z+,r17
+	adiw r24,1 ;load data2
+;	out EEARH,r25 ;for more than 0.25k memory
+	out EEARL,r24
+	sbi EECR,EERE
+	in r17,EEDR
+	st Z+,r17
+	adiw r24,1 ;load data3
+;	out EEARH,r25 ;for more than 0.25k memory
+	out EEARL,r24
+	sbi EECR,EERE
+	in r17,EEDR
+	st Z+,r17 ;Z > CRC
+	rcall CRCS
+	ld r17,Z
+	;cbr r17,0x80 ;correct bit off
+	sbiw r24,PS-1
+	cp r18,r17
+	brne cj ;всё равно мы тебя нашли, BAD
+	rjmp ck ;out
+cj:	;step down
+	;r16 - current header
+	ldi r17,high(SML+PS)
+	cpi r24,low(SML+PS)
+	cpc r25,r17
+	brlo cm
+	sbiw r24,PS
+	rjmp co
+cm:	ldi r25,high(SMH)
+	ldi r24,low(SMH)
+	;reward to last correct
+co:	;calculate delta
+	;out EEARH,r25
+	out EEARL,r24
+	sbi EECR,EERE
+	in r17,EEDR
+	cpi r16,0x01
+	brne cq
+	cpi r17,0xFE
+	breq cr
+cs:	clr r24
+	clr r25
+	;global error
+	rjmp ck
+cq:	sub r16,r17
+	cpi r16,0x01
+	brne cs ;error exit
+cr:	mov r16,r17
+	rjmp CCRC
+ck:	clr r16
+;	out  EEARH,r16 ;for more than 0.25k memory
+	out  EEARL,r16
+	pop ZH
+	pop ZL
+	pop r18
+	pop r17
+	pop r16
+	ret
+
+
+
+LLCR:	;Load last correct record
+	clr r7
+	clr r10
+	rcall FALH
+	cpi r24,0x0
+	brne bu
+	cpi r25,0x0
+	brne bu
+	ldi r24,low(SMH)
+	ldi r25,high(SMH)
+	clr r8
+	clr r9
+	clr r11
+	clr r12
+	ret
+bu:	; hdr crc hi mi ho mo
+	;  >
+	;Load all from RAM
+	push ZH
+	push ZL
+	ldi ZH,high(TiMem)
+	ldi ZL,low(TiMem)
+	ld r9,Z+
+	ld r8,Z+
+	ld r12,Z+
+	ld r11,Z
+	pop ZL
+	pop ZH
+	ret
+;---------------------------------------
+; Name  : CRC-8
+;  Poly  : 0x31    x^8 + x^5 + x^4 + 1
+;  Init  : 0xFF
+;  Revert: false
+;  XorOut: 0x00
+;  Check : 0xF7 ("123456789")
+;  MaxLen: 15 байт (127 бит)
+CRCT:	.db	0x00, 0x31, 0x62, 0x53, 0xC4, 0xF5, 0xA6, 0x97
+	.db	0xB9, 0x88, 0xDB, 0xEA, 0x7D, 0x4C, 0x1F, 0x2E
+	.db	0x43, 0x72, 0x21, 0x10, 0x87, 0xB6, 0xE5, 0xD4
+	.db	0xFA, 0xCB, 0x98, 0xA9, 0x3E, 0x0F, 0x5C, 0x6D
+	.db	0x86, 0xB7, 0xE4, 0xD5, 0x42, 0x73, 0x20, 0x11
+	.db	0x3F, 0x0E, 0x5D, 0x6C, 0xFB, 0xCA, 0x99, 0xA8
+	.db	0xC5, 0xF4, 0xA7, 0x96, 0x01, 0x30, 0x63, 0x52
+	.db	0x7C, 0x4D, 0x1E, 0x2F, 0xB8, 0x89, 0xDA, 0xEB
+	.db	0x3D, 0x0C, 0x5F, 0x6E, 0xF9, 0xC8, 0x9B, 0xAA
+	.db	0x84, 0xB5, 0xE6, 0xD7, 0x40, 0x71, 0x22, 0x13
+	.db	0x7E, 0x4F, 0x1C, 0x2D, 0xBA, 0x8B, 0xD8, 0xE9
+	.db	0xC7, 0xF6, 0xA5, 0x94, 0x03, 0x32, 0x61, 0x50
+	.db	0xBB, 0x8A, 0xD9, 0xE8, 0x7F, 0x4E, 0x1D, 0x2C
+	.db	0x02, 0x33, 0x60, 0x51, 0xC6, 0xF7, 0xA4, 0x95
+	.db	0xF8, 0xC9, 0x9A, 0xAB, 0x3C, 0x0D, 0x5E, 0x6F
+	.db	0x41, 0x70, 0x23, 0x12, 0x85, 0xB4, 0xE7, 0xD6
+	.db	0x7A, 0x4B, 0x18, 0x29, 0xBE, 0x8F, 0xDC, 0xED
+	.db	0xC3, 0xF2, 0xA1, 0x90, 0x07, 0x36, 0x65, 0x54
+	.db	0x39, 0x08, 0x5B, 0x6A, 0xFD, 0xCC, 0x9F, 0xAE
+	.db	0x80, 0xB1, 0xE2, 0xD3, 0x44, 0x75, 0x26, 0x17
+	.db	0xFC, 0xCD, 0x9E, 0xAF, 0x38, 0x09, 0x5A, 0x6B
+	.db	0x45, 0x74, 0x27, 0x16, 0x81, 0xB0, 0xE3, 0xD2
+	.db	0xBF, 0x8E, 0xDD, 0xEC, 0x7B, 0x4A, 0x19, 0x28
+	.db	0x06, 0x37, 0x64, 0x55, 0xC2, 0xF3, 0xA0, 0x91
+	.db	0x47, 0x76, 0x25, 0x14, 0x83, 0xB2, 0xE1, 0xD0
+	.db	0xFE, 0xCF, 0x9C, 0xAD, 0x3A, 0x0B, 0x58, 0x69
+	.db	0x04, 0x35, 0x66, 0x57, 0xC0, 0xF1, 0xA2, 0x93
+	.db	0xBD, 0x8C, 0xDF, 0xEE, 0x79, 0x48, 0x1B, 0x2A
+	.db	0xC1, 0xF0, 0xA3, 0x92, 0x05, 0x34, 0x67, 0x56
+	.db	0x78, 0x49, 0x1A, 0x2B, 0xBC, 0x8D, 0xDE, 0xEF
+	.db	0x82, 0xB3, 0xE0, 0xD1, 0x46, 0x77, 0x24, 0x15
+	.db	0x3B, 0x0A, 0x59, 0x68, 0xFF, 0xCE, 0x9D, 0xAC
+;unsigned char Crc8(unsigned char *pcBlock, unsigned char len)
+;{ unsigned char crc = 0xFF;
+;  while (len--) crc = Crc8Table[crc ^ *pcBlock++];
+;  return crc;}
+       ;R16 - Начальное значение и CRC16
+	;crc = table [ crc eor CurrentByte++ ]
+CRCS:	push r16
+	push r17
+	push r18
+	push YH
+	push YL
+	push ZH
+	push ZL
+	ser r16 ;preinit 0xFF
+	ldi YH,high(TiMem) ;начальное значение
+	ldi YL,low(TiMem)
+	ldi r18,4 ;data length
+CRC0:	ld r17,Y+ ;load first byte from RAM
+	eor r16,r17
+	clr r17
+	ldi ZL,low(CRCT*2)
+	ldi ZH,high(CRCT*2)
+	add ZL,r16
+	adc ZH,r17
+	lpm r16,Z+
+	subi R18,1
+	brne CRC0
+	st Y,r16
+	pop ZL
+	pop ZH
+	pop YL
+	pop YH
+	pop r18
+	pop r17
+	pop r16
+	ret
+	;CLI and FLCH required!
+LDWS:	;Load data with shift : function for WIEW previous record
+	;Step down for r2 packets
+	push r0
+	push r1
+	push r24
+	push r25
+	push r16
+	;tst r2
+	;breq c5
+	dec r2
+	mov r16,r2
+	cpi r16,(SMH-SML+PS-1)/PS+1 ;Ограничение по значению
+	;brsh c4; - was locked io mode change
+	brlo c5
+	ldi r16,(SMH-SML+PS-1)/PS+1 - 1
+	mov r2,r16
+c5:	subi r24,low(SML)
+	sbci r25,high(SML)
+	ldi r16,PS
+	mov r0,r16
+	mov r1,r2
+	mul r1,r0
+	cp r0,r24 ;low
+	cpc r1,r25 ;hi
+	breq c0
+	brlo c0
+	sub r0,r24
+	sbc r1,r25
+	ldi r24,low(SMH-SML+PS)
+	ldi r25,high(SMH-SML+PS)
+c0:	sub r24,r0
+	sbc r25,r1
+	mov r0,r24
+	mov r1,r25
+	ldi r24,low(SML)
+	ldi r25,high(SML)
+	add r24,r0
+	adc r25,r1
+	;pointer to current header
+	adiw r24,2
+	sbrs r13,3
+	adiw r24,2
+	push r14
+	push r15
+	;hdr crc hi mi ho mo
+c6:	sbic EECR,EEPE ;wait while writing
+	rjmp c6
+;	out EEARH,r25 ;for more than 0.25k memory
+	out EEARL,r24
+	sbi EECR,EERE
+	in r14,EEDR
+	adiw r24,1
+;	out EEARH,r25 ;for more than 0.25k memory
+	out EEARL,r24
+	sbi EECR,EERE
+	in r15,EEDR
+	clr r16
+;	out EEARH,r16 ;for more than 0.25k memory
+	out EEARL,r16
+	rcall MEMU
+	pop r15
+	pop r14
+c4:	inc r2
+	pop r16
+	pop r25
+	pop r24
+	pop r1
+	pop r0
+	ret
